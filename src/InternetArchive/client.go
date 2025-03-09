@@ -1,9 +1,11 @@
 package InternetArchive
 
 import (
+	"GServer/Config"
 	"GServer/Defaults"
 	"GServer/Logger"
 	"GServer/Movie"
+	"GServer/TaskManager"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,7 +14,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
+	"unsafe"
 )
 
 type JsonDictionary map[string]any
@@ -26,6 +30,8 @@ type Client struct {
 
 	Context context.Context
 	Timeout time.Duration
+
+	HttpClient *http.Client
 }
 
 func (this *Client) fetch(url *url.URL, method string, payload []byte) (JsonDictionary, error) {
@@ -45,9 +51,7 @@ func (this *Client) fetch(url *url.URL, method string, payload []byte) (JsonDict
 		return nil, err
 	}
 
-	var httpClient *http.Client = &http.Client{}
-
-	response, err := httpClient.Do(request)
+	response, err := this.HttpClient.Do(request)
 
 	if err != nil {
 		return nil, err
@@ -178,7 +182,7 @@ func (this *Client) Search(params *SearchParameters) ([]*Movie.MovieDetails, err
 		return nil, err, 0, 0
 	}
 
-	responseJsonData, err := this.fetch(url, "GET", nil)
+	responseJsonData, err := this.fetch(url, http.MethodGet, nil)
 
 	if err != nil {
 		return nil, err, 0, 0
@@ -213,6 +217,16 @@ func (this *Client) Search(params *SearchParameters) ([]*Movie.MovieDetails, err
 
 	var moviesListResult []*Movie.MovieDetails = make([]*Movie.MovieDetails, 0)
 
+	var appendListMutex sync.Mutex = sync.Mutex{}
+
+	tmContext, tmContextCancel := context.WithTimeout(this.Context, this.Timeout)
+
+	defer tmContextCancel()
+
+	var taskManager *TaskManager.TaskManager = TaskManager.CreateTaskManagerWithContext(tmContext, "IA_MOVIE_PARSER_"+fmt.Sprintf("%d", (uintptr)(unsafe.Pointer(&moviesListResult))), Config.Main.TasksMaxThreads.IA_MOVIE_PARSER)
+
+	taskManager.Start()
+
 	for _, value := range moviesList {
 		item, ok := value.(map[string]interface{})
 
@@ -222,10 +236,18 @@ func (this *Client) Search(params *SearchParameters) ([]*Movie.MovieDetails, err
 
 		var details *Movie.MovieDetails = Movie.NewMovieDetails()
 
-		parseMovieDetailsFromJsonData(details, &item, this)
+		taskManager.AddTaskWithDelay(func(t *TaskManager.Task) {
+			parseMovieDetailsFromJsonData(details, &item, this)
 
-		moviesListResult = append(moviesListResult, details)
+			appendListMutex.Lock()
+			moviesListResult = append(moviesListResult, details)
+			appendListMutex.Unlock()
+		}, 0)
 	}
+
+	taskManager.WaitForTasks()
+
+	TaskManager.DeleteTaskManager(taskManager.Name)
 
 	return moviesListResult, nil, movieCount, start
 }
@@ -240,6 +262,44 @@ func (this *Client) GetMovieList(params *SearchParameters, extra string) ([]*Mov
 	return this.Search(params)
 }
 
+func (this *Client) GetMovieCount(params *SearchParameters, extra string) (float64, error) {
+	params.Query = "mediatype:(movies) AND (subject:\"movie\" OR subject:\"serial\" OR subject:\"animation\" OR subject:\"cartoon\" OR subject:\"anime\")"
+
+	if len(extra) > 0 {
+		params.Query += " " + extra
+	}
+
+	url, err := url.Parse(this.AdvancedSearchEndpoint)
+
+	var queryParams *SearchParameters = NewSearchParameters("")
+
+	if params != nil {
+		queryParams = params
+	}
+
+	url.RawQuery = ConvertSearchParametersToURLParams(queryParams).Encode()
+
+	if err != nil {
+		return 0, err
+	}
+
+	responseJsonData, err := this.fetch(url, http.MethodGet, nil)
+
+	if err != nil {
+		return 0, err
+	}
+
+	var movieCount float64 = 0
+
+	movieCountData, exists := responseJsonData["numFound"]
+
+	if exists {
+		movieCount = movieCountData.(float64)
+	}
+
+	return movieCount, nil
+}
+
 func NewClient(ctx context.Context, timeout time.Duration) *Client {
 	var client *Client = new(Client)
 
@@ -251,6 +311,8 @@ func NewClient(ctx context.Context, timeout time.Duration) *Client {
 
 	client.Context = ctx
 	client.Timeout = timeout
+
+	client.HttpClient = new(http.Client)
 
 	if err != nil {
 		return nil

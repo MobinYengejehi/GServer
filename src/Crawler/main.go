@@ -36,9 +36,16 @@ func GetYTSTotalMovies(client *Client) float64 {
 		return 0
 	}
 
-	Logger.INFO("yts is : ", ytsClient)
+	var params *YTS.MoviesListParameters = YTS.NewMoviesListParameters()
 
-	return 0
+	count, err := ytsClient.GetMovieCount(params)
+
+	if err != nil {
+		Logger.ERROR("Failed getting movie counts. [Message: " + err.Error() + "]")
+		return 0
+	}
+
+	return count
 }
 
 func GetInternetArchiveSearchResult(client *Client) []*Movie.MovieDetails {

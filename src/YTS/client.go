@@ -32,6 +32,8 @@ type Client struct {
 
 	Context context.Context
 	Timeout time.Duration
+
+	HttpClient *http.Client
 }
 
 func (this *Client) fetch(url *url.URL, method string, payload []byte) (JsonDictionary, error) {
@@ -51,9 +53,7 @@ func (this *Client) fetch(url *url.URL, method string, payload []byte) (JsonDict
 		return nil, err
 	}
 
-	var httpClient *http.Client = &http.Client{}
-
-	response, err := httpClient.Do(request)
+	response, err := this.HttpClient.Do(request)
 
 	if err != nil {
 		return nil, err
@@ -493,6 +493,8 @@ func NewClient(ctx context.Context, timeout time.Duration) *Client {
 
 	client.Context = ctx
 	client.Timeout = timeout
+
+	client.HttpClient = new(http.Client)
 
 	if err != nil {
 		return nil

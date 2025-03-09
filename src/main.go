@@ -3,7 +3,7 @@ package main
 import (
 	"GServer/Config"
 	"GServer/Crawler"
-	"GServer/InternetArchive"
+	"GServer/HttpServer"
 	"GServer/Logger"
 	"GServer/TaskManager"
 	"GServer/YTS"
@@ -24,29 +24,13 @@ func main() {
 
 	TaskManager.Initialize()
 	Config.Initialize()
-	//HttpServer.Initialize()
+	HttpServer.Initialize()
 	Crawler.Initialize()
 
 	{
-		client := InternetArchive.NewClient(context.WithoutCancel(TaskManager.MainContext), time.Second*5)
-
-		if client != nil {
-			params := InternetArchive.NewSearchParameters("")
-
-			params.Rows = 1
-
-			movies, err, movieCount, start := client.GetMovieList(params, "")
-
-			if err != nil {
-				Logger.ERROR("couldn't get movies : ", err.Error())
-			} else {
-				Logger.INFO("movies are : ", movies[0].Title, " | ", movies[0].Torrents[0].MainFile, " | ", movieCount, start)
-			}
-		}
-
 		ytsClient := YTS.NewClient(context.WithoutCancel(TaskManager.MainContext), time.Second*5)
 
-		if client != nil {
+		if ytsClient != nil {
 			params := YTS.NewMoviesListParameters()
 
 			params.Limit = 50
@@ -66,7 +50,7 @@ func main() {
 	TaskManager.Wait()
 
 	Crawler.Uninitialize()
-	//HttpServer.Uninitialize()
+	HttpServer.Uninitialize()
 	Config.Uninitialize()
 	TaskManager.Uninitialize()
 }
